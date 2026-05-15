@@ -1,6 +1,8 @@
 [server]
 headless = true
 enableCORS = false
+fileWatcherType = "poll"
+runOnSave = true
 
 [theme]
 base = "light"

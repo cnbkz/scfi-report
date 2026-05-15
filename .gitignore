@@ -28,3 +28,9 @@ Thumbs.db
 
 # Logs
 *.log
+
+# 환경변수 및 비밀 키 (절대 커밋 금지)
+.env
+.scfi.key
+*.key
+data/
