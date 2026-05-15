@@ -64,6 +64,17 @@ def _mark_auto_collected() -> None:
     _AUTO_FLAG.write_text(datetime.now(KST).date().isoformat())
 
 
+def _report_date_labels(ran_at: str) -> tuple[str, str]:
+    """ran_at(ISO 날짜 문자열)으로 curr/prev 날짜 레이블 (M/D 형식) 반환."""
+    from datetime import timedelta
+    try:
+        cd = datetime.strptime(ran_at[:10], "%Y-%m-%d")
+        pd_ = cd - timedelta(days=7)
+        return f"{cd.month}/{cd.day}", f"{pd_.month}/{pd_.day}"
+    except Exception:
+        return "", ""
+
+
 # ── 페이지 설정 ────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="SCFI 자동보고 시스템",
@@ -369,11 +380,13 @@ if not st.session_state.auto_collected_today and _should_auto_collect():
                 # 폴링 시간대이면 검수자에게 자동으로 초안 발송
                 if _is_poll_now:
                     try:
+                        _ac, _pc = _report_date_labels(result.ran_at)
                         _auto_html = render_report(
                             result.calc_result, result.news, result.comment,
                             result.week_year, result.week_no,
                             graph_data=result.graph_data,
                             ksg_route_data=st.session_state.get("ksg_route_data") or {},
+                            curr_date=_ac, prev_date=_pc,
                         )
                         _auto_subj = get_email_subject(result.week_year, result.week_no)
                         send_review_email(_auto_html, _auto_subj)
@@ -754,10 +767,12 @@ with tab4:
             st.info("👆 상단 **수동 수집** 버튼으로 데이터를 먼저 수집하세요.")
         else:
             _cmt5  = st.session_state.comment_text or _pr5.comment
+            _c5, _p5 = _report_date_labels(_pr5.ran_at)
             _html5 = render_report(_pr5.calc_result, _pr5.news, _cmt5,
                                    _pr5.week_year, _pr5.week_no,
                                    graph_data=st.session_state.graph_data,
-                                   ksg_route_data=st.session_state.ksg_route_data or {})
+                                   ksg_route_data=st.session_state.ksg_route_data or {},
+                                   curr_date=_c5, prev_date=_p5)
 
             with st.expander("📋 HTML 보고서 미리보기", expanded=True):
                 st.components.v1.html(_html5, height=420, scrolling=True)
@@ -820,10 +835,12 @@ with tab4:
     # ── 탭 내 이벤트 핸들러 ──────────────────────────────────────────────
     if _review_click5 and _pr5:
         _cmt5  = st.session_state.comment_text or _pr5.comment
+        _c5, _p5 = _report_date_labels(_pr5.ran_at)
         _html5 = render_report(_pr5.calc_result, _pr5.news, _cmt5,
                                _pr5.week_year, _pr5.week_no,
                                graph_data=st.session_state.graph_data,
-                               ksg_route_data=st.session_state.ksg_route_data or {})
+                               ksg_route_data=st.session_state.ksg_route_data or {},
+                               curr_date=_c5, prev_date=_p5)
         with st.spinner("검수 메일 발송 중..."):
             _tok5 = send_review_email(_html5, get_email_subject(_pr5.week_year, _pr5.week_no))
         if _tok5:
@@ -849,10 +866,12 @@ with tab4:
 
     if _send5 and _pr5:
         _cmt5   = st.session_state.comment_text or _pr5.comment
+        _c5, _p5 = _report_date_labels(_pr5.ran_at)
         _html5  = render_report(_pr5.calc_result, _pr5.news, _cmt5,
                                 _pr5.week_year, _pr5.week_no,
                                 graph_data=st.session_state.graph_data,
-                                ksg_route_data=st.session_state.ksg_route_data or {})
+                                ksg_route_data=st.session_state.ksg_route_data or {},
+                                curr_date=_c5, prev_date=_p5)
         _subj5s = get_email_subject(_pr5.week_year, _pr5.week_no)
         with st.spinner("이메일 발송 중..."):
             _ok5 = send_report(_html5, _subj5s)

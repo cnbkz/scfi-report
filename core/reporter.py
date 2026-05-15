@@ -15,45 +15,40 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "templates")
 
 
 def _make_trend_chart_html(graph_data: list, ksg_route_data: dict) -> str:
-    """대시보드와 동일한 KSG 기반 멀티라인 추이 차트 (Plotly HTML 스니펫)."""
+    """대시보드와 동일한 KSG 기반 멀티라인 추이 차트 — 이메일용 PNG base64 임베드."""
     try:
+        import base64
         import plotly.graph_objects as go
         import plotly.io as pio
 
-        fig      = go.Figure()
-        has_ksg  = bool(ksg_route_data)
+        fig     = go.Figure()
+        has_ksg = bool(ksg_route_data)
 
-        # 종합지수 — KSG 26주 우선
+        # 종합지수 — KSG 26주 우선, surff.kr fallback (숫자 라벨 없음)
         ksg_comp = ksg_route_data.get("scfi_composite", []) if has_ksg else []
         if ksg_comp:
-            _d  = [p["date"]  for p in ksg_comp]
-            _v  = [p["value"] for p in ksg_comp]
-            _lb = [f"{v:,.0f}" for v in _v]
+            _d = [p["date"]  for p in ksg_comp]
+            _v = [p["value"] for p in ksg_comp]
             fig.add_trace(go.Scatter(
-                x=_d, y=_v, name="SCFI 종합",
-                mode="lines+markers+text", text=_lb,
-                textposition="top center",
-                textfont=dict(size=10, color="#1a365d"),
-                line=dict(color="#1a365d", width=2.5),
-                marker=dict(size=4, color="#1a365d"),
-                hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
+                x=_d, y=_v, name="SCFI Composite",
+                mode="lines+markers",
+                line=dict(color="#1a365d", width=3.0),
+                marker=dict(size=5, color="#1a365d"),
             ))
         elif graph_data:
             _d = [d["date"] for d in graph_data]
             _v = [d["scfi_composite"] for d in graph_data]
             fig.add_trace(go.Scatter(
-                x=_d, y=_v, name="SCFI 종합",
+                x=_d, y=_v, name="SCFI Composite",
                 mode="lines+markers",
-                line=dict(color="#1a365d", width=2.5),
-                marker=dict(size=4, color="#1a365d"),
-                hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
+                line=dict(color="#1a365d", width=3.0),
+                marker=dict(size=5, color="#1a365d"),
             ))
 
-        # 항로별 라인 (USWC / Europe / USEC)
+        # 항로별 라인 — USWC / Europe (영문 약칭 사용, 범례 렌더링 안정화)
         for field, (name, color) in [
-            ("scfi_north_america_west", ("북미 서안 (USWC)", "#dd6b20")),
-            ("scfi_europe",             ("유럽",              "#38a169")),
-            ("scfi_north_america_east", ("북미 동안 (USEC)", "#e53e3e")),
+            ("scfi_north_america_west", ("USWC",   "#dd6b20")),
+            ("scfi_europe",             ("Europe", "#38a169")),
         ]:
             pts = ksg_route_data.get(field, []) if has_ksg else []
             if not pts:
@@ -61,28 +56,44 @@ def _make_trend_chart_html(graph_data: list, ksg_route_data: dict) -> str:
             fig.add_trace(go.Scatter(
                 x=[p["date"] for p in pts], y=[p["value"] for p in pts],
                 name=name, mode="lines+markers",
-                line=dict(color=color, width=1.6),
-                marker=dict(size=3, color=color),
-                hovertemplate=f"%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
+                line=dict(color=color, width=1.8),
+                marker=dict(size=5, color=color),
             ))
 
         if not fig.data:
             return ""
 
+        n_weeks = len(ksg_comp) if ksg_comp else len(graph_data)
         fig.update_layout(
-            height=320,
-            margin=dict(l=0, r=60, t=10, b=90),
+            title=dict(
+                text=f"SCFI Weekly Trend  (Past {n_weeks} weeks)",
+                font=dict(size=14),
+                x=0.02,
+            ),
+            height=380,
+            margin=dict(l=10, r=90, t=50, b=60),
             plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
             yaxis=dict(tickformat=",", gridcolor="#f0f0f0", side="right",
-                       tickfont=dict(size=11)),
-            xaxis=dict(showgrid=False, tickangle=-30, tickfont=dict(size=10)),
-            legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.30,
-                        font=dict(size=11)),
-            hovermode="x unified",
-            font=dict(family="'Apple SD Gothic Neo','Noto Sans KR',Arial,sans-serif"),
+                       tickfont=dict(size=12)),
+            xaxis=dict(showgrid=False, tickangle=-30, tickfont=dict(size=11)),
+            legend=dict(
+                orientation="v",
+                x=1.02, xanchor="left",
+                y=0.98, yanchor="top",
+                font=dict(size=12),
+                bgcolor="rgba(255,255,255,0.8)",
+                bordercolor="#e2e8f0", borderwidth=1,
+            ),
         )
-        return pio.to_html(fig, full_html=False, include_plotlyjs="cdn",
-                           config={"displayModeBar": False})
+
+        # 이메일 호환 정적 PNG (JavaScript 차단 우회)
+        png_bytes = pio.to_image(fig, format="png", width=680, height=380, scale=2)
+        b64 = base64.b64encode(png_bytes).decode()
+        return (
+            f'<img src="data:image/png;base64,{b64}" '
+            f'style="width:100%;max-width:680px;display:block;margin:0 auto;" '
+            f'alt="SCFI Weekly Trend" />'
+        )
     except Exception as e:
         logger.warning(f"보고서 추이 차트 생성 실패: {e}")
         return ""
@@ -96,6 +107,8 @@ def render_report(
     week_no: int,
     graph_data: list | None = None,
     ksg_route_data: dict | None = None,
+    curr_date: str = "",
+    prev_date: str = "",
 ) -> str:
     env      = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     template = env.get_template("report.html")
@@ -111,6 +124,8 @@ def render_report(
         news         = news,
         comment      = comment,
         chart_html   = _make_trend_chart_html(graph_data or [], ksg_route_data or {}),
+        curr_date    = curr_date,
+        prev_date    = prev_date,
     )
     logger.info("보고서 HTML 렌더링 완료")
     return html
