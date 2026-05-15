@@ -14,41 +14,78 @@ KST          = pytz.timezone("Asia/Seoul")
 TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "..", "templates")
 
 
-def _make_chart_html(calc_result: dict) -> str:
-    """calc_result 기반 금주/전주 비교 막대 차트 (Plotly HTML 스니펫)."""
+def _make_trend_chart_html(graph_data: list, ksg_route_data: dict) -> str:
+    """대시보드와 동일한 KSG 기반 멀티라인 추이 차트 (Plotly HTML 스니펫)."""
     try:
         import plotly.graph_objects as go
         import plotly.io as pio
-        from core.calculator import scfi_rows
 
-        rows = scfi_rows(calc_result)
-        if not rows:
+        fig      = go.Figure()
+        has_ksg  = bool(ksg_route_data)
+
+        # 종합지수 — KSG 26주 우선
+        ksg_comp = ksg_route_data.get("scfi_composite", []) if has_ksg else []
+        if ksg_comp:
+            _d  = [p["date"]  for p in ksg_comp]
+            _v  = [p["value"] for p in ksg_comp]
+            _n  = len(_v)
+            _lb = [f"{v:,.0f}" if i >= _n - 8 else "" for i, v in enumerate(_v)]
+            fig.add_trace(go.Scatter(
+                x=_d, y=_v, name="SCFI 종합",
+                mode="lines+markers+text", text=_lb,
+                textposition="top center",
+                textfont=dict(size=10, color="#1a365d"),
+                line=dict(color="#1a365d", width=2.5),
+                marker=dict(size=4, color="#1a365d"),
+                hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
+            ))
+        elif graph_data:
+            _d = [d["date"] for d in graph_data]
+            _v = [d["scfi_composite"] for d in graph_data]
+            fig.add_trace(go.Scatter(
+                x=_d, y=_v, name="SCFI 종합",
+                mode="lines+markers",
+                line=dict(color="#1a365d", width=2.5),
+                marker=dict(size=4, color="#1a365d"),
+                hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
+            ))
+
+        # 항로별 라인 (USWC / Europe / USEC)
+        for field, (name, color) in [
+            ("scfi_north_america_west", ("북미 서안 (USWC)", "#dd6b20")),
+            ("scfi_europe",             ("유럽",              "#38a169")),
+            ("scfi_north_america_east", ("북미 동안 (USEC)", "#e53e3e")),
+        ]:
+            pts = ksg_route_data.get(field, []) if has_ksg else []
+            if not pts:
+                continue
+            fig.add_trace(go.Scatter(
+                x=[p["date"] for p in pts], y=[p["value"] for p in pts],
+                name=name, mode="lines+markers",
+                line=dict(color=color, width=1.6),
+                marker=dict(size=3, color=color),
+                hovertemplate=f"%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
+            ))
+
+        if not fig.data:
             return ""
 
-        labels  = [r["label"]    for r in rows]
-        current = [r["current"]  for r in rows]
-        prev    = [r["previous"] for r in rows]
-        colors  = ["#c53030" if c >= p else "#2b6cb0" for c, p in zip(current, prev)]
-
-        fig = go.Figure()
-        fig.add_bar(name="전주", x=labels, y=prev,    marker_color="#cbd5e0", opacity=0.75)
-        fig.add_bar(name="금주", x=labels, y=current, marker_color=colors)
         fig.update_layout(
-            barmode="group",
-            height=280,
-            margin=dict(l=0, r=0, t=10, b=50),
-            plot_bgcolor="#ffffff",
-            paper_bgcolor="#ffffff",
-            yaxis=dict(tickformat=",", gridcolor="#f0f0f0"),
-            xaxis=dict(tickfont=dict(size=11)),
-            legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.22,
-                        font=dict(size=12)),
+            height=320,
+            margin=dict(l=0, r=60, t=10, b=90),
+            plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
+            yaxis=dict(tickformat=",", gridcolor="#f0f0f0", side="right",
+                       tickfont=dict(size=11)),
+            xaxis=dict(showgrid=False, tickangle=-30, tickfont=dict(size=10)),
+            legend=dict(orientation="h", x=0.5, xanchor="center", y=-0.30,
+                        font=dict(size=11)),
+            hovermode="x unified",
             font=dict(family="'Apple SD Gothic Neo','Noto Sans KR',Arial,sans-serif"),
         )
         return pio.to_html(fig, full_html=False, include_plotlyjs="cdn",
                            config={"displayModeBar": False})
     except Exception as e:
-        logger.warning(f"보고서 차트 생성 실패: {e}")
+        logger.warning(f"보고서 추이 차트 생성 실패: {e}")
         return ""
 
 
@@ -58,6 +95,8 @@ def render_report(
     comment: str,
     week_year: int,
     week_no: int,
+    graph_data: list | None = None,
+    ksg_route_data: dict | None = None,
 ) -> str:
     env      = Environment(loader=FileSystemLoader(TEMPLATE_DIR), autoescape=True)
     template = env.get_template("report.html")
@@ -72,7 +111,7 @@ def render_report(
         scfi_rows    = scfi_rows(calc_result),
         news         = news,
         comment      = comment,
-        chart_html   = _make_chart_html(calc_result),
+        chart_html   = _make_trend_chart_html(graph_data or [], ksg_route_data or {}),
     )
     logger.info("보고서 HTML 렌더링 완료")
     return html

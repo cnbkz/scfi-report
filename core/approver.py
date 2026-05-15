@@ -89,19 +89,53 @@ def send_review_email(html_body: str, subject: str) -> str | None:
 
 # ── IMAP 회신 확인 ────────────────────────────────────────────────────────
 
-def check_reply() -> bool:
+def _extract_reply_text(msg) -> str:
+    """이메일 회신에서 원문 인용 전 새 내용만 추출 (plain text 우선)."""
+    import re
+
+    body = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            if ct == "text/plain":
+                body = part.get_payload(decode=True).decode("utf-8", errors="replace")
+                break
+        if not body:
+            for part in msg.walk():
+                if part.get_content_type() == "text/html":
+                    from bs4 import BeautifulSoup
+                    html = part.get_payload(decode=True).decode("utf-8", errors="replace")
+                    body = BeautifulSoup(html, "html.parser").get_text(separator="\n")
+                    break
+    else:
+        body = msg.get_payload(decode=True).decode("utf-8", errors="replace")
+
+    # 원문 인용 구분선(On ... wrote: / -----Original / 발신: 등) 이전만 추출
+    for pat in [
+        r'\nOn .+?wrote:', r'\n[-]{3,}\s*Original', r'\n발신:', r'\n보낸\s*날짜:',
+        r'\n[-]{3,}', r'\n_{3,}',
+    ]:
+        parts = re.split(pat, body, maxsplit=1, flags=re.IGNORECASE | re.DOTALL)
+        if len(parts) > 1:
+            body = parts[0]
+            break
+
+    return body.strip()
+
+
+def check_reply() -> tuple[bool, str]:
     """
     IMAP으로 검수자의 회신 여부 확인.
-    회신 발견 시 상태를 approved로 업데이트하고 True 반환.
-    IMAP 미설정이면 False 반환(에러 아님).
+    반환: (approved, reply_comment) — reply_comment는 회신에서 추출한 수정 코멘트.
+    회신 발견 시 상태를 approved로 업데이트.
     """
     state = load_state()
     if not state:
-        return False
+        return False, ""
     if state.get("status") == "approved":
-        return True
+        return True, state.get("reply_comment", "")
     if state.get("status") != "pending":
-        return False
+        return False, ""
 
     from core.smtp_config import load_smtp_config
     cfg = load_smtp_config()
@@ -113,7 +147,7 @@ def check_reply() -> bool:
 
     if not all([imap_host, imap_user, imap_pass]):
         logger.info("IMAP 설정 미완성 — 회신 확인 건너뜀")
-        return False
+        return False, ""
 
     token     = state.get("token", "")
     reviewers = [r.lower() for r in state.get("reviewers", [])]
@@ -126,7 +160,7 @@ def check_reply() -> bool:
             _, nums = imap.search(None, f'SUBJECT "{search_kw}"')
             if not nums or not nums[0]:
                 logger.info(f"IMAP: 검수 토큰 {token} 관련 회신 없음")
-                return False
+                return False, ""
 
             for num in nums[0].split():
                 _, data = imap.fetch(num, "(RFC822)")
@@ -134,19 +168,20 @@ def check_reply() -> bool:
                 msg = _email_module.message_from_bytes(raw)
                 sender = msg.get("From", "").lower()
                 subj   = msg.get("Subject", "")
-                # 회신 메일: Re: 포함 + 발신자가 검수자
                 if subj.lower().startswith("re:") and any(r in sender for r in reviewers):
-                    state["status"]      = "approved"
-                    state["approved_at"] = datetime.now().isoformat()
+                    reply_comment = _extract_reply_text(msg)
+                    state["status"]        = "approved"
+                    state["approved_at"]   = datetime.now().isoformat()
+                    state["reply_comment"] = reply_comment
                     _save_state(state)
-                    logger.info(f"검수 승인 감지 (회신): {sender}")
-                    return True
+                    logger.info(f"검수 승인 감지 (회신): {sender}, 코멘트 길이={len(reply_comment)}")
+                    return True, reply_comment
     except imaplib.IMAP4.error as e:
         logger.warning(f"IMAP 로그인 실패: {e}")
     except Exception as e:
         logger.warning(f"IMAP 회신 확인 오류: {e}")
 
-    return False
+    return False, ""
 
 
 # ── 상태 관리 ─────────────────────────────────────────────────────────────

@@ -143,19 +143,22 @@ def get_history_cached() -> pd.DataFrame:
     return load_history()
 
 
-def render_index_table(rows: list[dict], title: str) -> None:
-    st.markdown(f"**{title}**")
+def render_index_table(rows: list[dict], title: str,
+                       curr_date: str = "", prev_date: str = "") -> None:
+    if title:
+        st.markdown(f"**{title}**")
+    curr_lbl = f"금주{'  (' + curr_date + ')' if curr_date else ''}"
+    prev_lbl = f"전주{'  (' + prev_date + ')' if prev_date else ''}"
     cols = st.columns([3, 2, 2, 2, 2])
-    headers = ["지표", "금주", "전주", "증감", "증감률"]
-    for col, h in zip(cols, headers):
+    for col, h in zip(cols, ["지표", prev_lbl, curr_lbl, "증감", "증감률"]):
         col.markdown(f"<div style='font-size:12px;color:#718096;font-weight:600;'>{h}</div>",
                      unsafe_allow_html=True)
     for row in rows:
         c = direction_color(row["direction"])
         cols = st.columns([3, 2, 2, 2, 2])
         cols[0].write(row["label"])
-        cols[1].write(f"**{fmt_val(row['current'])}** {row['unit']}")
-        cols[2].write(fmt_val(row['previous']))
+        cols[1].write(fmt_val(row["previous"]))                              # 전주 먼저
+        cols[2].write(f"**{fmt_val(row['current'])}** {row['unit']}")       # 금주 나중
         cols[3].markdown(f"<span style='color:{c};font-weight:600;'>{fmt_change(row)}</span>",
                          unsafe_allow_html=True)
         cols[4].markdown(f"<span style='color:{c};font-weight:600;'>{fmt_pct(row)}</span>",
@@ -346,6 +349,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ── 폴링 여부 (자동수집 블록 전에 먼저 계산) ──────────────────────────────
+_now_kst_pre = datetime.now(KST)
+_is_poll_now = _now_kst_pre.weekday() == 4 and 15 <= _now_kst_pre.hour < 18
+
 # ── 당일 첫 자동 수집 (캐시 없고 플래그 없을 때만) ────────────────────────
 if not st.session_state.auto_collected_today and _should_auto_collect():
     with st.spinner("📡 당일 최신 데이터 자동 업데이트 중..."):
@@ -359,11 +366,40 @@ if not st.session_state.auto_collected_today and _should_auto_collect():
                 st.session_state.blog_news            = None
                 st.session_state.auto_collected_today = True
                 _mark_auto_collected()
-                save_pipeline_cache(result)           # 디스크 캐시 저장
+                save_pipeline_cache(result)
                 st.toast("✅ 자동 업데이트 완료", icon="✅")
+                # 폴링 시간대이면 검수자에게 자동으로 초안 발송
+                if _is_poll_now:
+                    try:
+                        _auto_html = render_report(
+                            result.calc_result, result.news, result.comment,
+                            result.week_year, result.week_no,
+                            graph_data=result.graph_data,
+                            ksg_route_data=st.session_state.get("ksg_route_data") or {},
+                        )
+                        _auto_subj = get_email_subject(result.week_year, result.week_no)
+                        send_review_email(_auto_html, _auto_subj)
+                        st.session_state.review_status = "pending"
+                        st.toast("📋 검수 메일 자동 발송됨", icon="📋")
+                    except Exception as _ae:
+                        logging.warning(f"자동 검수 메일 발송 실패: {_ae}")
         except Exception as e:
             logging.warning(f"자동 수집 실패: {e}")
             st.session_state.auto_collected_today = True
+
+# ── 검수 상태 pending이면 IMAP 자동 확인 (앱 로드마다) ────────────────────
+if st.session_state.review_status == "pending":
+    try:
+        _auto_approved, _reply_cmt = check_reply()
+        if _auto_approved:
+            st.session_state.review_status = "approved"
+            if _reply_cmt and len(_reply_cmt) > 20:
+                st.session_state.comment_text = _reply_cmt
+                st.toast("✅ 검수자 회신 감지 — 코멘트 자동 반영됨", icon="✅")
+            else:
+                st.toast("✅ 검수자 회신 확인됨", icon="✅")
+    except Exception:
+        pass
 
 # ── ksg 루트 데이터 로드 (세션당 1회) ─────────────────────────────────────
 if st.session_state.ksg_route_data is None:
@@ -414,12 +450,12 @@ pr = st.session_state.pipeline_result
 c1, c2, c3 = st.columns(3)
 
 now_kst = datetime.now(KST)
-is_poll = now_kst.weekday() == 4 and 15 <= now_kst.hour < 17
+is_poll = now_kst.weekday() == 4 and 15 <= now_kst.hour < 18
 
 with c1:
     status_label = "🟢 폴링 활성" if is_poll else "⚪ 대기 중"
     st.metric("시스템 상태", status_label,
-              delta="금 15:00~17:00 자동 실행" if not is_poll else "폴링 중")
+              delta="금 15:00~18:00 자동 실행" if not is_poll else "폴링 중")
 
 with c2:
     last_at = st.session_state.last_ran_at or "미수집"
@@ -445,7 +481,16 @@ with tab1:
     # 1. SCFI 지수 현황 ──────────────────────────────────────────────────────
     if pr is not None:
         st.markdown("### SCFI 지수 현황")
-        render_index_table(scfi_rows(pr.calc_result), "")
+        try:
+            from datetime import timedelta as _td
+            _cd = datetime.strptime(pr.ran_at[:10], "%Y-%m-%d")
+            _pd = _cd - _td(days=7)
+            _curr_lbl = f"{_cd.month}/{_cd.day}"
+            _prev_lbl = f"{_pd.month}/{_pd.day}"
+        except Exception:
+            _curr_lbl = _prev_lbl = ""
+        render_index_table(scfi_rows(pr.calc_result), "",
+                           curr_date=_curr_lbl, prev_date=_prev_lbl)
         st.markdown("---")
     else:
         st.info("👆 **수동 수집** 버튼을 눌러 데이터를 수집하거나, 매일 첫 로딩 시 자동 업데이트됩니다.")
@@ -712,7 +757,9 @@ with tab4:
         else:
             _cmt5  = st.session_state.comment_text or _pr5.comment
             _html5 = render_report(_pr5.calc_result, _pr5.news, _cmt5,
-                                   _pr5.week_year, _pr5.week_no)
+                                   _pr5.week_year, _pr5.week_no,
+                                   graph_data=st.session_state.graph_data,
+                                   ksg_route_data=st.session_state.ksg_route_data or {})
 
             with st.expander("📋 HTML 보고서 미리보기", expanded=True):
                 st.components.v1.html(_html5, height=420, scrolling=True)
@@ -776,7 +823,9 @@ with tab4:
     if _review_click5 and _pr5:
         _cmt5  = st.session_state.comment_text or _pr5.comment
         _html5 = render_report(_pr5.calc_result, _pr5.news, _cmt5,
-                               _pr5.week_year, _pr5.week_no)
+                               _pr5.week_year, _pr5.week_no,
+                               graph_data=st.session_state.graph_data,
+                               ksg_route_data=st.session_state.ksg_route_data or {})
         with st.spinner("검수 메일 발송 중..."):
             _tok5 = send_review_email(_html5, get_email_subject(_pr5.week_year, _pr5.week_no))
         if _tok5:
@@ -788,10 +837,14 @@ with tab4:
 
     if _chkreply5:
         with st.spinner("IMAP 회신 확인 중..."):
-            _found5 = check_reply()
+            _found5, _reply_cmt5 = check_reply()
         if _found5:
             st.session_state.review_status = "approved"
-            st.success("✅ 검수자 회신 확인! 보고서 발송 버튼을 눌러주세요.")
+            if _reply_cmt5 and len(_reply_cmt5) > 20:
+                st.session_state.comment_text = _reply_cmt5
+                st.success("✅ 검수자 회신 확인! 수정된 코멘트가 자동 반영되었습니다.")
+            else:
+                st.success("✅ 검수자 회신 확인! 보고서 발송 버튼을 눌러주세요.")
             st.rerun()
         else:
             st.info("아직 검수자의 회신이 없습니다.")
@@ -799,7 +852,9 @@ with tab4:
     if _send5 and _pr5:
         _cmt5   = st.session_state.comment_text or _pr5.comment
         _html5  = render_report(_pr5.calc_result, _pr5.news, _cmt5,
-                                _pr5.week_year, _pr5.week_no)
+                                _pr5.week_year, _pr5.week_no,
+                                graph_data=st.session_state.graph_data,
+                                ksg_route_data=st.session_state.ksg_route_data or {})
         _subj5s = get_email_subject(_pr5.week_year, _pr5.week_no)
         with st.spinner("이메일 발송 중..."):
             _ok5 = send_report(_html5, _subj5s)
