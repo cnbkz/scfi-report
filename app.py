@@ -190,9 +190,7 @@ def render_trend_chart(
     if ksg_comp:
         _d = [p["date"]  for p in ksg_comp]
         _v = [p["value"] for p in ksg_comp]
-        _n = len(_v)
-        # 라벨은 최근 12주만 표시 (가독성)
-        _lbl = [f"{v:,.0f}" if i >= _n - 12 else "" for i, v in enumerate(_v)]
+        _lbl = [f"{v:,.0f}" for v in _v]
         fig.add_trace(go.Scatter(
             x=_d, y=_v,
             name="SCFI 종합",
