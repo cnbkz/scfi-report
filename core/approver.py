@@ -14,6 +14,7 @@ import logging
 import smtplib
 import uuid
 from datetime import datetime
+from email.header import decode_header as _decode_header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -151,31 +152,66 @@ def check_reply() -> tuple[bool, str]:
 
     token     = state.get("token", "")
     reviewers = [r.lower() for r in state.get("reviewers", [])]
-    search_kw = f"SCFI 검수요청-{token}"
+    sent_at   = state.get("sent_at", "")
 
     try:
         with imaplib.IMAP4_SSL(imap_host, imap_port) as imap:
             imap.login(imap_user, imap_pass)
             imap.select("INBOX")
-            _, nums = imap.search(None, f'SUBJECT "{search_kw}"')
+
+            # 한국어 SUBJECT 검색 인코딩 오류 우회 — 최근 7일 전체 메일을 가져와 필터링
+            from datetime import timedelta
+            since = (datetime.now() - timedelta(days=7)).strftime("%d-%b-%Y")
+            _, nums = imap.search(None, f'SINCE {since}')
             if not nums or not nums[0]:
-                logger.info(f"IMAP: 검수 토큰 {token} 관련 회신 없음")
                 return False, ""
 
-            for num in nums[0].split():
+            for num in reversed(nums[0].split()):   # 최신 메일부터 탐색
                 _, data = imap.fetch(num, "(RFC822)")
                 raw = data[0][1] if data and data[0] else b""
-                msg = _email_module.message_from_bytes(raw)
-                sender = msg.get("From", "").lower()
-                subj   = msg.get("Subject", "")
-                if subj.lower().startswith("re:") and any(r in sender for r in reviewers):
-                    reply_comment = _extract_reply_text(msg)
-                    state["status"]        = "approved"
-                    state["approved_at"]   = datetime.now().isoformat()
-                    state["reply_comment"] = reply_comment
-                    _save_state(state)
-                    logger.info(f"검수 승인 감지 (회신): {sender}, 코멘트 길이={len(reply_comment)}")
-                    return True, reply_comment
+                msg    = _email_module.message_from_bytes(raw)
+
+                # 인코딩된 헤더 디코딩 (=?UTF-8?B?...?= 처리)
+                def _hdec(val: str) -> str:
+                    parts = _decode_header(val or "")
+                    out   = []
+                    for part, charset in parts:
+                        if isinstance(part, bytes):
+                            out.append(part.decode(charset or "utf-8", errors="replace"))
+                        else:
+                            out.append(part)
+                    return "".join(out)
+
+                sender = _hdec(msg.get("From", "")).lower()
+                subj   = _hdec(msg.get("Subject", ""))
+
+                # ① 검수자 회신인지 확인 (Re: + 발신자 + 검수요청 키워드)
+                is_reply      = subj.lower().startswith("re:")
+                from_reviewer = any(r in sender for r in reviewers)
+                is_scfi_reply = "scfi" in subj.lower() and "검수요청" in subj
+
+                if not (is_reply and from_reviewer and is_scfi_reply):
+                    continue
+
+                # ② 발송 시각 이후 메일만 허용
+                if sent_at:
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        msg_date = parsedate_to_datetime(msg.get("Date", ""))
+                        sent_dt  = datetime.fromisoformat(sent_at)
+                        if msg_date.replace(tzinfo=None) < sent_dt:
+                            continue
+                    except Exception:
+                        pass
+
+                reply_comment = _extract_reply_text(msg)
+                state["status"]        = "approved"
+                state["approved_at"]   = datetime.now().isoformat()
+                state["reply_comment"] = reply_comment
+                _save_state(state)
+                logger.info(f"검수 승인 감지 (회신): {sender}, 코멘트 길이={len(reply_comment)}")
+                return True, reply_comment
+
     except imaplib.IMAP4.error as e:
         logger.warning(f"IMAP 로그인 실패: {e}")
     except Exception as e:

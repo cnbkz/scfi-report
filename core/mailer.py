@@ -37,24 +37,33 @@ def send_report(html_body: str, subject: str, retries: int = 3) -> bool:
     """
     host, port, user, password, recipients = _get_smtp_params()
 
-    if not all([user, password, recipients]):
-        logger.error("SMTP 설정 불완전 — EMAIL_RECIPIENTS, SMTP_USER, SMTP_PASS 확인")
+    # 검수자도 최종 수신자에 포함 (중복 제거)
+    try:
+        from core.smtp_config import load_smtp_config
+        cfg = load_smtp_config()
+        reviewer_list = [r.strip() for r in cfg.get("reviewer_emails", "").split(",") if r.strip()]
+        all_recipients = list(dict.fromkeys(recipients + reviewer_list))
+    except Exception:
+        all_recipients = recipients
+
+    if not all([user, password, all_recipients]):
+        logger.error("SMTP 설정 불완전 — EMAIL_RECIPIENTS(또는 REVIEWER_EMAILS), SMTP_USER, SMTP_PASS 확인")
         return False
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"]    = user
-    msg["To"]      = ", ".join(recipients)
+    msg["To"]      = ", ".join(all_recipients)
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
     for attempt in range(1, retries + 1):
         try:
-            logger.info(f"이메일 발송 시도 {attempt}/{retries} → {recipients}")
+            logger.info(f"이메일 발송 시도 {attempt}/{retries} → {all_recipients}")
             with smtplib.SMTP(host, port, timeout=30) as smtp:
                 smtp.ehlo()
                 smtp.starttls()
                 smtp.login(user, password)
-                smtp.sendmail(user, recipients, msg.as_string())
+                smtp.sendmail(user, all_recipients, msg.as_string())
             logger.info(f"이메일 발송 완료: {recipients}")
             return True
         except smtplib.SMTPAuthenticationError:
