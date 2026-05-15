@@ -26,10 +26,9 @@ _HEADERS = {
     "Origin": "https://surff.kr",
 }
 
-# cateSeq → 카테고리명
+# cateSeq → 카테고리명 (주간 물류 동향 제거 → KSG 뉴스로 대체)
 BLOG_CATEGORIES = {
     2: "주간 선사 동향",
-    3: "주간 물류 동향",
     9: "데일리스크랩",
 }
 
@@ -98,9 +97,60 @@ def _parse_blocknote(content_json: str) -> list[dict]:
     return items
 
 
+_KSG_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "ko-KR,ko;q=0.9",
+    "Referer": "https://www.ksg.co.kr/",
+}
+
+_KSG_KEYWORDS = ["컨테이너", "운임", "SCFI", "컨테이너선", "선복", "해운시황", "해상운임"]
+
+
+def _fetch_ksg_news(max_items: int = 4) -> list[dict]:
+    """ksg.co.kr 메인 뉴스에서 컨테이너선 해운시황 관련 뉴스 최대 max_items건 반환."""
+    base = "https://www.ksg.co.kr"
+    try:
+        resp = requests.get(
+            f"{base}/news/main_news.jsp",
+            headers=_KSG_HEADERS,
+            timeout=15,
+        )
+        resp.encoding = "utf-8"
+        soup = BeautifulSoup(resp.text, "html.parser")
+        items: list[dict] = []
+
+        for a in soup.find_all("a", href=True):
+            href  = a["href"]
+            title = a.get_text(strip=True)
+            if not title or len(title) < 6:
+                continue
+            if "main_newsView" not in href and "newsView" not in href:
+                continue
+            if not any(kw in title for kw in _KSG_KEYWORDS):
+                continue
+            full_url = href if href.startswith("http") else f"{base}{href}"
+            # 중복 제거
+            if any(i["url"] == full_url for i in items):
+                continue
+            items.append({"title": title, "url": full_url, "summary": ""})
+            if len(items) >= max_items:
+                break
+
+        logger.info(f"[KSG 뉴스] {len(items)}건 수집")
+        return items
+    except Exception as e:
+        logger.warning(f"KSG 뉴스 수집 실패: {e}")
+        return []
+
+
 def crawl_blog_news() -> list[dict]:
     """
-    surff.kr/blog 3개 카테고리에서 최신 뉴스 수집.
+    surff.kr/blog 카테고리 + KSG 컨테이너 뉴스 수집.
     반환: [{"category", "post_title", "post_url", "post_date", "items": [...]}]
     """
     results = []
@@ -123,6 +173,17 @@ def crawl_blog_news() -> list[dict]:
             "items":      items,
         })
         logger.info(f"[{cate_name}] {len(items)}건 수집 ({post_date})")
+
+    # KSG 컨테이너선 해운시황 뉴스 (주간 물류 동향 대체)
+    ksg_items = _fetch_ksg_news(max_items=4)
+    if ksg_items:
+        results.append({
+            "category":   "KSG 컨테이너 해운시황",
+            "post_title": f"최신 컨테이너 해운시황 뉴스 ({datetime.now().strftime('%m/%d')})",
+            "post_url":   "https://www.ksg.co.kr/news/main_news.jsp",
+            "post_date":  datetime.now().strftime("%Y-%m-%d"),
+            "items":      ksg_items,
+        })
 
     return results
 

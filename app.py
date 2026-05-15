@@ -182,30 +182,36 @@ def render_trend_chart(
 
     fig = go.Figure()
 
-    # ── 종합지수 (surff.kr graphData, 24주, 굵은 실선+라벨) ───────────────
-    if has_graph:
-        dates  = [d["date"] for d in graph_data]
-        values = [d["scfi_composite"] for d in graph_data]
-        labels = [f"{v:,.0f}" for v in values]
+    # ── 종합지수: KSG 26주 우선(USWC·유럽과 기간 일치), surff.kr fallback ──
+    ksg_comp = ksg_data.get("scfi_composite", []) if has_ksg else []
+    if ksg_comp:
+        _d = [p["date"]  for p in ksg_comp]
+        _v = [p["value"] for p in ksg_comp]
+        _n = len(_v)
+        # 라벨은 최근 12주만 표시 (가독성)
+        _lbl = [f"{v:,.0f}" if i >= _n - 12 else "" for i, v in enumerate(_v)]
         fig.add_trace(go.Scatter(
-            x=dates, y=values,
+            x=_d, y=_v,
             name="SCFI 종합",
             mode="lines+markers+text",
-            text=labels,
+            text=_lbl,
             textposition="top center",
-            textfont=dict(size=14, color="#1a365d"),
+            textfont=dict(size=13, color="#1a365d"),
             line=dict(color="#1a365d", width=3.5),
             marker=dict(size=6, color="#1a365d"),
             hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
         ))
-    elif ksg_data.get("scfi_composite"):
-        # graphData 없으면 ksg composite fallback
-        pts = ksg_data["scfi_composite"]
+    elif has_graph:
+        _d = [d["date"] for d in graph_data]
+        _v = [d["scfi_composite"] for d in graph_data]
+        _lbl = [f"{v:,.0f}" for v in _v]
         fig.add_trace(go.Scatter(
-            x=[p["date"] for p in pts],
-            y=[p["value"] for p in pts],
+            x=_d, y=_v,
             name="SCFI 종합",
-            mode="lines+markers",
+            mode="lines+markers+text",
+            text=_lbl,
+            textposition="top center",
+            textfont=dict(size=13, color="#1a365d"),
             line=dict(color="#1a365d", width=3.5),
             marker=dict(size=6, color="#1a365d"),
             hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
@@ -259,7 +265,7 @@ def render_trend_chart(
                 hovertemplate=f"%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
             ))
 
-    n_weeks = len(graph_data) if has_graph else (len(ksg_data.get("scfi_composite", [])))
+    n_weeks = len(ksg_comp) if ksg_comp else (len(graph_data) if has_graph else len(ksg_data.get("scfi_composite", [])))
     fig.update_layout(
         title=dict(
             text=f"SCFI 지수 주간 추이 (최근 {n_weeks}주)",

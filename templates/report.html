@@ -43,6 +43,14 @@
       </tbody>
     </table>
 
+    <!-- ── SCFI 지수 추이 차트 ── -->
+    {% if chart_html %}
+    <h2 style="margin:0 0 14px;font-size:15px;color:#1a365d;padding-bottom:8px;border-bottom:2px solid #1a365d;">■ SCFI 지수 추이 (금주 vs 전주)</h2>
+    <div style="margin-bottom:28px;">
+      {{ chart_html | safe }}
+    </div>
+    {% endif %}
+
     <!-- ── 해상시황 뉴스 ── -->
     {% if news %}
     <h2 style="margin:0 0 14px;font-size:15px;color:#1a365d;padding-bottom:8px;border-bottom:2px solid #1a365d;">■ 금주 해상시황 주요 뉴스</h2>
