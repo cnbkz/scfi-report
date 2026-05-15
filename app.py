@@ -64,11 +64,24 @@ def _mark_auto_collected() -> None:
     _AUTO_FLAG.write_text(datetime.now(KST).date().isoformat())
 
 
-def _report_date_labels(ran_at: str) -> tuple[str, str]:
-    """ran_at(ISO 날짜 문자열)으로 curr/prev 날짜 레이블 (M/D 형식) 반환."""
+def _report_date_labels(ran_at: str, graph_data: list | None = None) -> tuple[str, str]:
+    """SCFI 실제 발행 날짜를 graph_data에서 추출해 curr/prev 레이블 반환 (M/D 형식).
+    graph_data 없으면 ran_at 기반 fallback."""
     from datetime import timedelta
+
+    if graph_data and len(graph_data) >= 2:
+        try:
+            dates = sorted(d["date"] for d in graph_data if d.get("date"))
+            if len(dates) >= 2:
+                def _fmt(d: str) -> str:
+                    p = d.replace("/", "-").split("-")
+                    return f"{int(p[1])}/{int(p[2])}" if len(p) == 3 else d
+                return _fmt(dates[-1]), _fmt(dates[-2])
+        except Exception:
+            pass
+
     try:
-        cd = datetime.strptime(ran_at[:10], "%Y-%m-%d")
+        cd  = datetime.strptime(ran_at[:10], "%Y-%m-%d")
         pd_ = cd - timedelta(days=7)
         return f"{cd.month}/{cd.day}", f"{pd_.month}/{pd_.day}"
     except Exception:
@@ -380,7 +393,7 @@ if not st.session_state.auto_collected_today and _should_auto_collect():
                 # 폴링 시간대이면 검수자에게 자동으로 초안 발송
                 if _is_poll_now:
                     try:
-                        _ac, _pc = _report_date_labels(result.ran_at)
+                        _ac, _pc = _report_date_labels(result.ran_at, result.graph_data or [])
                         _auto_html = render_report(
                             result.calc_result, result.news, result.comment,
                             result.week_year, result.week_no,
@@ -394,9 +407,14 @@ if not st.session_state.auto_collected_today and _should_auto_collect():
                         st.toast("📋 검수 메일 자동 발송됨", icon="📋")
                     except Exception as _ae:
                         logging.warning(f"자동 검수 메일 발송 실패: {_ae}")
+                # KSG 데이터 강제 갱신 (트렌드 차트 즉시 반영)
+                st.session_state.ksg_route_data = None
         except Exception as e:
             logging.warning(f"자동 수집 실패: {e}")
             st.session_state.auto_collected_today = True
+        else:
+            if st.session_state.pipeline_result is not None:
+                st.rerun()
 
 # ── 검수 상태 pending이면 IMAP 자동 확인 (앱 로드마다) ────────────────────
 if st.session_state.review_status == "pending":
@@ -492,14 +510,9 @@ with tab1:
     # 1. SCFI 지수 현황 ──────────────────────────────────────────────────────
     if pr is not None:
         st.markdown("### SCFI 지수 현황")
-        try:
-            from datetime import timedelta as _td
-            _cd = datetime.strptime(pr.ran_at[:10], "%Y-%m-%d")
-            _pd = _cd - _td(days=7)
-            _curr_lbl = f"{_cd.month}/{_cd.day}"
-            _prev_lbl = f"{_pd.month}/{_pd.day}"
-        except Exception:
-            _curr_lbl = _prev_lbl = ""
+        _curr_lbl, _prev_lbl = _report_date_labels(
+            pr.ran_at, st.session_state.graph_data or []
+        )
         render_index_table(scfi_rows(pr.calc_result), "",
                            curr_date=_curr_lbl, prev_date=_prev_lbl)
         st.markdown("---")
@@ -767,7 +780,7 @@ with tab4:
             st.info("👆 상단 **수동 수집** 버튼으로 데이터를 먼저 수집하세요.")
         else:
             _cmt5  = st.session_state.comment_text or _pr5.comment
-            _c5, _p5 = _report_date_labels(_pr5.ran_at)
+            _c5, _p5 = _report_date_labels(_pr5.ran_at, st.session_state.graph_data or [])
             _html5 = render_report(_pr5.calc_result, _pr5.news, _cmt5,
                                    _pr5.week_year, _pr5.week_no,
                                    graph_data=st.session_state.graph_data,
@@ -835,7 +848,7 @@ with tab4:
     # ── 탭 내 이벤트 핸들러 ──────────────────────────────────────────────
     if _review_click5 and _pr5:
         _cmt5  = st.session_state.comment_text or _pr5.comment
-        _c5, _p5 = _report_date_labels(_pr5.ran_at)
+        _c5, _p5 = _report_date_labels(_pr5.ran_at, st.session_state.graph_data or [])
         _html5 = render_report(_pr5.calc_result, _pr5.news, _cmt5,
                                _pr5.week_year, _pr5.week_no,
                                graph_data=st.session_state.graph_data,
@@ -866,7 +879,7 @@ with tab4:
 
     if _send5 and _pr5:
         _cmt5   = st.session_state.comment_text or _pr5.comment
-        _c5, _p5 = _report_date_labels(_pr5.ran_at)
+        _c5, _p5 = _report_date_labels(_pr5.ran_at, st.session_state.graph_data or [])
         _html5  = render_report(_pr5.calc_result, _pr5.news, _cmt5,
                                 _pr5.week_year, _pr5.week_no,
                                 graph_data=st.session_state.graph_data,

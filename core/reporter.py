@@ -66,12 +66,12 @@ def _make_trend_chart_html(graph_data: list, ksg_route_data: dict) -> str:
         n_weeks = len(ksg_comp) if ksg_comp else len(graph_data)
         fig.update_layout(
             title=dict(
-                text=f"SCFI Weekly Trend  (Past {n_weeks} weeks)",
+                text=f"SCFI지수 주간 추이  (최근 {n_weeks}주)",
                 font=dict(size=14),
                 x=0.02,
             ),
             height=380,
-            margin=dict(l=10, r=90, t=50, b=60),
+            margin=dict(l=10, r=160, t=50, b=60),
             plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
             yaxis=dict(tickformat=",", gridcolor="#f0f0f0", side="right",
                        tickfont=dict(size=12)),
