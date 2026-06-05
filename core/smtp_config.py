@@ -11,7 +11,7 @@ from core.secrets import encrypt_value, decrypt_value
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_PATH = Path("data/smtp_config.json")
+_CONFIG_PATH = Path(__file__).resolve().parent.parent / "data" / "smtp_config.json"
 
 _DEFAULTS = {
     "smtp_host":       "smtp.gmail.com",

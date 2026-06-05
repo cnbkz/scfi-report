@@ -18,9 +18,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from core.calculator  import FIELD_META, scfi_rows
 from core.pipeline    import run as run_pipeline, PipelineResult
-from core.storage     import load_history, is_new_data_available, save_pipeline_cache, load_pipeline_cache
+from core.storage     import load_history, is_new_data_available, save_pipeline_cache, load_pipeline_cache, save_comment_only
 from core.llm         import generate_comment
-from core.reporter    import render_report, get_email_subject
+from core.reporter    import render_report, get_email_subject, build_trend_fig
 from core.mailer      import send_report
 from core.news        import crawl_blog_news
 from core.kobc        import download_all_reports, load_kobc_context, get_kobc_route_history
@@ -100,6 +100,7 @@ st.set_page_config(
 for key, default in {
     "pipeline_result":      None,
     "comment_text":         "",
+    "prev_comment_text":    "",   # AI 재생성 전 이전 코멘트 (되돌리기용)
     "last_ran_at":          "",
     "email_status":         "",
     "graph_data":           [],
@@ -128,7 +129,10 @@ if st.session_state.pipeline_result is None:
                 ran_at      = _cache.get("ran_at",      ""),
             )
             if not st.session_state.comment_text:
-                st.session_state.comment_text = _cache.get("comment", "")
+                _cached_cmt = _cache.get("comment", "")
+                st.session_state.comment_text = _cached_cmt
+                if "comment_editor" not in st.session_state:
+                    st.session_state.comment_editor = _cached_cmt
             if not st.session_state.last_ran_at:
                 st.session_state.last_ran_at  = _cache.get("ran_at",  "")
             if not st.session_state.graph_data:
@@ -193,15 +197,34 @@ def render_trend_chart(
     graph_data: list[dict],
     ksg_data: dict,
     kobc_hist: list[dict],
+    current_raw: dict | None = None,   # 최신 surff.kr raw_data (차트 패치용)
+    current_date: str = "",            # 최신 수집 날짜 YYYY-MM-DD
 ) -> None:
     """
-    graph_data  : surff.kr graphData — 종합지수 24주
-    ksg_data    : ksg.co.kr 공개 JSON — composite/USWC/Europe 26주
-    kobc_hist   : KOBC PDF 추출 — USEC/Australia 11주+
+    graph_data   : surff.kr graphData — 종합지수 24주
+    ksg_data     : ksg.co.kr 공개 JSON — composite/USWC/Europe 26주
+    kobc_hist    : KOBC PDF 추출 — USEC/Australia 11주+
+    current_raw  : 당일 surff.kr 최신값 → KSG 캐시 미반영 시 마지막 포인트 주입
+    current_date : 당일 수집 날짜 (YYYY-MM-DD)
     """
     has_graph = bool(graph_data) and len(graph_data) >= 2
     has_ksg   = bool(ksg_data)
     has_kobc  = bool(kobc_hist)
+
+    # ── KSG 캐시 미반영분 보완: 최신 수집값을 차트 마지막 포인트로 주입 ──────
+    if current_raw and current_date and has_ksg:
+        import copy
+        ksg_data = copy.deepcopy(ksg_data)   # 세션 원본 보호
+        for field in ["scfi_composite", "scfi_north_america_west", "scfi_europe"]:
+            pts = ksg_data.get(field, [])
+            if not pts:
+                continue
+            last_date = pts[-1]["date"]
+            if current_date > last_date:
+                val = current_raw.get(field)
+                if val is not None:
+                    ksg_data[field] = pts + [{"date": current_date, "value": float(val)}]
+        has_ksg = bool(ksg_data)
 
     if not has_graph and not has_ksg and not has_kobc:
         st.info("추이 차트를 표시하려면 수동 수집을 한 번 이상 실행하세요.")
@@ -268,27 +291,6 @@ def render_trend_chart(
             hovertemplate=f"%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
         ))
 
-    # KOBC 루트 (USEC, Australia) — 11주+
-    kobc_fields = {"scfi_north_america_east", "scfi_australia"}
-    if has_kobc:
-        kobc_df = pd.DataFrame(kobc_hist)
-        for field, (name, color) in route_cfg.items():
-            if field not in kobc_fields:
-                continue
-            if field not in kobc_df.columns:
-                continue
-            valid = kobc_df[["date", field]].dropna().sort_values("date")
-            if valid.empty:
-                continue
-            fig.add_trace(go.Scatter(
-                x=valid["date"].tolist(),
-                y=valid[field].tolist(),
-                name=name,
-                mode="lines+markers",
-                line=dict(color=color, width=1.8),
-                marker=dict(size=6, color=color),
-                hovertemplate=f"%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
-            ))
 
     n_weeks = len(ksg_comp) if ksg_comp else (len(graph_data) if has_graph else len(ksg_data.get("scfi_composite", [])))
     fig.update_layout(
@@ -383,6 +385,7 @@ if not st.session_state.auto_collected_today and _should_auto_collect():
             if result.success:
                 st.session_state.pipeline_result      = result
                 st.session_state.comment_text         = result.comment
+                st.session_state.comment_editor       = result.comment
                 st.session_state.last_ran_at          = result.ran_at
                 st.session_state.graph_data           = result.graph_data
                 st.session_state.blog_news            = None
@@ -400,6 +403,8 @@ if not st.session_state.auto_collected_today and _should_auto_collect():
                             graph_data=result.graph_data,
                             ksg_route_data=st.session_state.get("ksg_route_data") or {},
                             curr_date=_ac, prev_date=_pc,
+                            current_raw=result.raw_data,
+                            current_date=result.ran_at[:10],
                         )
                         _auto_subj = get_email_subject(result.week_year, result.week_no)
                         send_review_email(_auto_html, _auto_subj)
@@ -423,7 +428,8 @@ if st.session_state.review_status == "pending":
         if _auto_approved:
             st.session_state.review_status = "approved"
             if _reply_cmt and len(_reply_cmt) > 20:
-                st.session_state.comment_text = _reply_cmt
+                st.session_state.comment_text   = _reply_cmt
+                st.session_state.comment_editor = _reply_cmt
                 st.toast("✅ 검수자 회신 감지 — 코멘트 자동 반영됨", icon="✅")
             else:
                 st.toast("✅ 검수자 회신 확인됨", icon="✅")
@@ -456,6 +462,7 @@ if collect_clicked:
     if result.success:
         st.session_state.pipeline_result = result
         st.session_state.comment_text    = result.comment
+        st.session_state.comment_editor  = result.comment
         st.session_state.last_ran_at     = result.ran_at
         st.session_state.email_status    = ""
         st.session_state.graph_data      = result.graph_data
@@ -469,9 +476,12 @@ if collect_clicked:
 # ── 코멘트 재생성 ──────────────────────────────────────────────────────────
 if regen_clicked and st.session_state.pipeline_result:
     pr = st.session_state.pipeline_result
+    st.session_state.prev_comment_text = st.session_state.comment_text  # 되돌리기용 백업
     with st.spinner("시황 분석 생성 중..."):
         new_comment = generate_comment(pr.calc_result, pr.news)
-    st.session_state.comment_text = new_comment
+    st.session_state.comment_text   = new_comment
+    st.session_state.comment_editor = new_comment
+    save_comment_only(new_comment)
     st.success("시황 분석 재생성 완료")
 
 # ── 상태 카드 ─────────────────────────────────────────────────────────────
@@ -522,10 +532,14 @@ with tab1:
     # 2. 주간 지수 추이 ──────────────────────────────────────────────────────
     st.markdown("### 주간 지수 추이")
     kobc_hist = get_kobc_route_history()
+    _curr_raw  = pr.raw_data if pr else None
+    _curr_date = pr.ran_at[:10] if pr else ""
     render_trend_chart(
         st.session_state.graph_data,
         st.session_state.ksg_route_data or {},
         kobc_hist,
+        current_raw=_curr_raw,
+        current_date=_curr_date,
     )
     st.markdown("---")
 
@@ -535,14 +549,24 @@ with tab1:
         kobc_ctx = load_kobc_context(max_reports=1)
         if kobc_ctx:
             st.caption("📑 KOBC 주간 리포트 기반 분석 (최근 2건 반영)")
-        edited = st.text_area(
+        st.text_area(
             label="코멘트 편집 가능 (이메일 발송 시 반영)",
-            value=st.session_state.comment_text,
+            key="comment_editor",   # value= 제거: 매 re-run마다 초기화되는 버그 방지
             height=160,
-            key="comment_editor",
         )
-        if edited != st.session_state.comment_text:
-            st.session_state.comment_text = edited
+        # text_area 변경 감지 → comment_text 동기화 + 디스크 저장
+        if st.session_state.comment_editor != st.session_state.comment_text:
+            st.session_state.comment_text = st.session_state.comment_editor
+            save_comment_only(st.session_state.comment_editor)
+            st.toast("💾 코멘트 자동 저장됨")
+        if (st.session_state.prev_comment_text
+                and st.session_state.prev_comment_text != st.session_state.comment_text):
+            if st.button("↩️ 이전으로 되돌리기", key="undo_comment_tab1"):
+                st.session_state.comment_text   = st.session_state.prev_comment_text
+                st.session_state.comment_editor = st.session_state.prev_comment_text
+                save_comment_only(st.session_state.prev_comment_text)
+                st.session_state.prev_comment_text = ""
+                st.rerun()
         st.markdown("---")
 
     # 4. 해상시황 최신 뉴스 ─────────────────────────────────────────────────
@@ -759,11 +783,22 @@ with tab4:
         )
         if st.button("AI 분석 생성", use_container_width=True,
                      disabled=_pr5 is None, key="regen_tab5"):
+            st.session_state.prev_comment_text = st.session_state.comment_text  # 되돌리기용 백업
             with st.spinner("시황 분석 생성 중..."):
                 _nc5 = generate_comment(_pr5.calc_result, _pr5.news)
-            st.session_state.comment_text = _nc5
+            st.session_state.comment_text   = _nc5
+            st.session_state.comment_editor = _nc5
+            save_comment_only(_nc5)
             st.success("재생성 완료")
             st.rerun()
+        if (st.session_state.prev_comment_text
+                and st.session_state.prev_comment_text != st.session_state.comment_text):
+            if st.button("↩️ 이전으로 되돌리기", use_container_width=True, key="undo_comment_tab5"):
+                st.session_state.comment_text   = st.session_state.prev_comment_text
+                st.session_state.comment_editor = st.session_state.prev_comment_text
+                save_comment_only(st.session_state.prev_comment_text)
+                st.session_state.prev_comment_text = ""
+                st.rerun()
 
     # ════════════════════════════════════════════════════════════════════════
     #  오른쪽: 보고서 미리보기 및 발송
@@ -785,10 +820,12 @@ with tab4:
                                    _pr5.week_year, _pr5.week_no,
                                    graph_data=st.session_state.graph_data,
                                    ksg_route_data=st.session_state.ksg_route_data or {},
-                                   curr_date=_c5, prev_date=_p5)
+                                   curr_date=_c5, prev_date=_p5,
+                                   current_raw=_pr5.raw_data,
+                                   current_date=_pr5.ran_at[:10])
 
-            with st.expander("📋 HTML 보고서 미리보기", expanded=True):
-                st.components.v1.html(_html5, height=420, scrolling=True)
+            with st.expander("📋 HTML 보고서 미리보기 (이메일 발송 내용)", expanded=True):
+                st.components.v1.html(_html5, height=900, scrolling=True)
 
         # 검수 상태 배지
         if _rev5_status == "pending":
@@ -853,7 +890,9 @@ with tab4:
                                _pr5.week_year, _pr5.week_no,
                                graph_data=st.session_state.graph_data,
                                ksg_route_data=st.session_state.ksg_route_data or {},
-                               curr_date=_c5, prev_date=_p5)
+                               curr_date=_c5, prev_date=_p5,
+                               current_raw=_pr5.raw_data,
+                               current_date=_pr5.ran_at[:10])
         with st.spinner("검수 메일 발송 중..."):
             _tok5 = send_review_email(_html5, get_email_subject(_pr5.week_year, _pr5.week_no))
         if _tok5:
@@ -869,7 +908,8 @@ with tab4:
         if _found5:
             st.session_state.review_status = "approved"
             if _reply_cmt5 and len(_reply_cmt5) > 20:
-                st.session_state.comment_text = _reply_cmt5
+                st.session_state.comment_text   = _reply_cmt5
+                st.session_state.comment_editor = _reply_cmt5
                 st.success("✅ 검수자 회신 확인! 수정된 코멘트가 자동 반영되었습니다.")
             else:
                 st.success("✅ 검수자 회신 확인! 보고서 발송 버튼을 눌러주세요.")
@@ -884,7 +924,9 @@ with tab4:
                                 _pr5.week_year, _pr5.week_no,
                                 graph_data=st.session_state.graph_data,
                                 ksg_route_data=st.session_state.ksg_route_data or {},
-                                curr_date=_c5, prev_date=_p5)
+                                curr_date=_c5, prev_date=_p5,
+                                current_raw=_pr5.raw_data,
+                                current_date=_pr5.ran_at[:10])
         _subj5s = get_email_subject(_pr5.week_year, _pr5.week_no)
         with st.spinner("이메일 발송 중..."):
             _ok5 = send_report(_html5, _subj5s)
