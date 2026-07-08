@@ -140,3 +140,21 @@ def load_pipeline_cache() -> dict | None:
     except Exception as e:
         logger.warning(f"캐시 로드 실패: {e}")
         return None
+
+
+def save_comment_only(comment: str) -> None:
+    """파이프라인 캐시의 comment 필드만 갱신. 수동 편집 즉시 저장에 사용."""
+    try:
+        if _CACHE_PATH.exists():
+            data = json.loads(_CACHE_PATH.read_text(encoding="utf-8"))
+        else:
+            data = {}
+        data["comment"] = comment
+        data["comment_edited_at"] = datetime.now(KST).isoformat()
+        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CACHE_PATH.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        logger.warning(f"코멘트 저장 실패: {e}")
