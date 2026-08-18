@@ -112,7 +112,7 @@ for key, default in {
     if key not in st.session_state:
         st.session_state[key] = default
 
-# ── 새로고침 시 디스크 캐시에서 세션 복원 ────────────────────────────────
+# ── 새로고침 시 디스크 캐시에서 세션 복원 (없으면 자동 수집) ────────────
 if st.session_state.pipeline_result is None:
     _cache = load_pipeline_cache()
     if _cache:
@@ -137,10 +137,25 @@ if st.session_state.pipeline_result is None:
                 st.session_state.last_ran_at  = _cache.get("ran_at",  "")
             if not st.session_state.graph_data:
                 st.session_state.graph_data   = _cache.get("graph_data", [])
-            # 캐시가 있으면 당일 자동수집 재실행 방지
             st.session_state.auto_collected_today = True
         except Exception as _e:
             logging.warning(f"캐시 복원 실패: {_e}")
+
+    # 디스크 캐시가 없거나 복원 실패 시 자동 수집 실행
+    if st.session_state.pipeline_result is None:
+        try:
+            _init_res = run_pipeline(send_email=False)
+            if _init_res.success:
+                st.session_state.pipeline_result      = _init_res
+                st.session_state.comment_text         = _init_res.comment
+                st.session_state.comment_editor       = _init_res.comment
+                st.session_state.last_ran_at          = _init_res.ran_at
+                st.session_state.graph_data           = _init_res.graph_data
+                st.session_state.blog_news            = _init_res.news
+                st.session_state.auto_collected_today = True
+                save_pipeline_cache(_init_res)
+        except Exception as _ie:
+            logging.warning(f"초기 수집 실패: {_ie}")
 
 # ── 앱 시작 시 저장된 검수 상태 복원 ─────────────────────────────────────
 if st.session_state.review_status is None:
@@ -201,111 +216,32 @@ def render_trend_chart(
     current_date: str = "",            # 최신 수집 날짜 YYYY-MM-DD
 ) -> None:
     """
-    graph_data   : surff.kr graphData — 종합지수 24주
-    ksg_data     : ksg.co.kr 공개 JSON — composite/USWC/Europe 26주
-    kobc_hist    : KOBC PDF 추출 — USEC/Australia 11주+
-    current_raw  : 당일 surff.kr 최신값 → KSG 캐시 미반영 시 마지막 포인트 주입
-    current_date : 당일 수집 날짜 (YYYY-MM-DD)
+    5개 노선의 SCFI 주간 추이 차트 렌더링 (최근 27주 통합).
     """
-    has_graph = bool(graph_data) and len(graph_data) >= 2
-    has_ksg   = bool(ksg_data)
-    has_kobc  = bool(kobc_hist)
+    from core.reporter import _build_unified_figure
 
-    # ── KSG 캐시 미반영분 보완: 최신 수집값을 차트 마지막 포인트로 주입 ──────
-    if current_raw and current_date and has_ksg:
-        import copy
-        ksg_data = copy.deepcopy(ksg_data)   # 세션 원본 보호
-        for field in ["scfi_composite", "scfi_north_america_west", "scfi_europe"]:
-            pts = ksg_data.get(field, [])
-            if not pts:
-                continue
-            last_date = pts[-1]["date"]
-            if current_date > last_date:
-                val = current_raw.get(field)
-                if val is not None:
-                    ksg_data[field] = pts + [{"date": current_date, "value": float(val)}]
-        has_ksg = bool(ksg_data)
+    fig, n_weeks = _build_unified_figure(
+        graph_data, ksg_data, current_raw, current_date, weeks=27
+    )
 
-    if not has_graph and not has_ksg and not has_kobc:
-        st.info("추이 차트를 표시하려면 수동 수집을 한 번 이상 실행하세요.")
+    if not fig or not fig.data:
+        st.info("추이 차트를 표시하려면 수동 수집을 한 회 이상 실행하세요.")
         return
 
-    fig = go.Figure()
-
-    # ── 종합지수: KSG 26주 우선(USWC·유럽과 기간 일치), surff.kr fallback ──
-    ksg_comp = ksg_data.get("scfi_composite", []) if has_ksg else []
-    if ksg_comp:
-        _d = [p["date"]  for p in ksg_comp]
-        _v = [p["value"] for p in ksg_comp]
-        _lbl = [f"{v:,.0f}" for v in _v]
-        fig.add_trace(go.Scatter(
-            x=_d, y=_v,
-            name="SCFI 종합",
-            mode="lines+markers+text",
-            text=_lbl,
-            textposition="top center",
-            textfont=dict(size=13, color="#1a365d"),
-            line=dict(color="#1a365d", width=3.5),
-            marker=dict(size=6, color="#1a365d"),
-            hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
-        ))
-    elif has_graph:
-        _d = [d["date"] for d in graph_data]
-        _v = [d["scfi_composite"] for d in graph_data]
-        _lbl = [f"{v:,.0f}" for v in _v]
-        fig.add_trace(go.Scatter(
-            x=_d, y=_v,
-            name="SCFI 종합",
-            mode="lines+markers+text",
-            text=_lbl,
-            textposition="top center",
-            textfont=dict(size=13, color="#1a365d"),
-            line=dict(color="#1a365d", width=3.5),
-            marker=dict(size=6, color="#1a365d"),
-            hovertemplate="%{x}<br>종합: %{y:,.0f}<extra></extra>",
-        ))
-
-    # ── 루트별 라인 설정 ──────────────────────────────────────────────────
-    route_cfg = {
-        "scfi_north_america_east": ("북미 동안 (USEC)", "#e53e3e"),
-        "scfi_north_america_west": ("북미 서안 (USWC)", "#dd6b20"),
-        "scfi_europe":             ("유럽",              "#38a169"),
-        "scfi_australia":          ("호주/오세아니아",    "#805ad5"),
-    }
-
-    # ksg 루트 (USWC, Europe) — 26주
-    ksg_fields = {"scfi_north_america_west", "scfi_europe"}
-    for field, (name, color) in route_cfg.items():
-        if field not in ksg_fields:
-            continue
-        pts = ksg_data.get(field, [])
-        if not pts:
-            continue
-        fig.add_trace(go.Scatter(
-            x=[p["date"] for p in pts],
-            y=[p["value"] for p in pts],
-            name=name,
-            mode="lines+markers",
-            line=dict(color=color, width=1.8),
-            marker=dict(size=6, color=color),
-            hovertemplate=f"%{{x}}<br>{name}: %{{y:,.0f}}<extra></extra>",
-        ))
-
-
-    n_weeks = len(ksg_comp) if ksg_comp else (len(graph_data) if has_graph else len(ksg_data.get("scfi_composite", [])))
     fig.update_layout(
         title=dict(
             text=f"SCFI 지수 주간 추이 (최근 {n_weeks}주)",
             font=dict(size=16),
         ),
-        height=450,
-        margin=dict(l=10, r=80, t=55, b=90),
+        height=650,
+        margin=dict(l=75, r=85, t=75, b=90),
         legend=dict(
             orientation="h",
             x=0.5,
             xanchor="center",
-            y=-0.22,
-            font=dict(size=15),
+            y=1.1,
+            yanchor="bottom",
+            font=dict(size=14),
         ),
         hovermode="x unified",
         plot_bgcolor="#ffffff",
@@ -313,17 +249,17 @@ def render_trend_chart(
         xaxis=dict(
             showgrid=False,
             tickangle=-30,
-            tickfont=dict(size=14),
+            tickfont=dict(size=13),
         ),
         yaxis=dict(
             gridcolor="#f0f0f0",
             side="right",
             tickformat=",",
-            tickfont=dict(size=14),
+            tickfont=dict(size=13),
         ),
     )
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("종합·USWC·유럽: ksg.co.kr 26주 / USEC·호주: KOBC 주간리포트 기준")
+    st.caption("데이터 출처: KOBC 주간통합리포트 / KSG / surff.kr (최근 27주 전 노선 통합)")
 
 
 def render_blog_news(blog_news: list[dict]) -> None:
@@ -388,7 +324,7 @@ if not st.session_state.auto_collected_today and _should_auto_collect():
                 st.session_state.comment_editor       = result.comment
                 st.session_state.last_ran_at          = result.ran_at
                 st.session_state.graph_data           = result.graph_data
-                st.session_state.blog_news            = None
+                st.session_state.blog_news            = result.news
                 st.session_state.auto_collected_today = True
                 _mark_auto_collected()
                 save_pipeline_cache(result)
@@ -445,13 +381,17 @@ if st.session_state.ksg_route_data is None:
         st.session_state.ksg_route_data = {}
 
 # ── 상단 액션 버튼 ──────────────────────────────────────────────────────────
-col_btn1, col_btn2, col_spacer = st.columns([1.4, 1.6, 7.0])
+col_btn1, col_btn2, col_btn3, col_spacer = st.columns([1.3, 1.5, 1.7, 5.5])
 
 with col_btn1:
     collect_clicked = st.button("🔄 수동 수집", use_container_width=True)
 with col_btn2:
     regen_clicked = st.button("🤖 코멘트 재생성", use_container_width=True,
                               disabled=st.session_state.pipeline_result is None)
+with col_btn3:
+    review_top_clicked = st.button("📋 검수 메일 발송", use_container_width=True,
+                                   disabled=st.session_state.pipeline_result is None,
+                                   help="검수자에게 이메일 보고서 초안을 즉시 발송합니다.")
 
 st.divider()
 
@@ -466,7 +406,7 @@ if collect_clicked:
         st.session_state.last_ran_at     = result.ran_at
         st.session_state.email_status    = ""
         st.session_state.graph_data      = result.graph_data
-        st.session_state.blog_news       = None
+        st.session_state.blog_news       = result.news
         save_pipeline_cache(result)       # 디스크 캐시 저장 → 새로고침 후 복원
         _mark_auto_collected()
         st.success(f"✅ 수집 완료 ({result.ran_at})")
@@ -483,6 +423,29 @@ if regen_clicked and st.session_state.pipeline_result:
     st.session_state.comment_editor = new_comment
     save_comment_only(new_comment)
     st.success("시황 분석 재생성 완료")
+
+# ── 상단 검수 메일 발송 ───────────────────────────────────────────────────
+if review_top_clicked and st.session_state.pipeline_result:
+    _pr_top = st.session_state.pipeline_result
+    _cmt_top = st.session_state.comment_text or _pr_top.comment
+    _c_top, _p_top = _report_date_labels(_pr_top.ran_at, st.session_state.graph_data or [])
+    _html_top = render_report(
+        _pr_top.calc_result, _pr_top.news, _cmt_top,
+        _pr_top.week_year, _pr_top.week_no,
+        graph_data=st.session_state.graph_data,
+        ksg_route_data=st.session_state.ksg_route_data or {},
+        curr_date=_c_top, prev_date=_p_top,
+        current_raw=_pr_top.raw_data,
+        current_date=_pr_top.ran_at[:10]
+    )
+    with st.spinner("검수 메일 발송 중..."):
+        _tok_top = send_review_email(_html_top, get_email_subject(_pr_top.week_year, _pr_top.week_no))
+    if _tok_top:
+        st.session_state.review_status = "pending"
+        st.success(f"✅ 검수 메일 발송 완료 (토큰: {_tok_top})")
+        st.rerun()
+    else:
+        st.error("❌ 발송 실패 — 검수자 이메일 및 SMTP 설정을 확인해 주세요.")
 
 # ── 상태 카드 ─────────────────────────────────────────────────────────────
 pr = st.session_state.pipeline_result
@@ -812,7 +775,14 @@ with tab4:
         )
 
         if _pr5 is None:
-            st.info("👆 상단 **수동 수집** 버튼으로 데이터를 먼저 수집하세요.")
+            try:
+                _pr5 = run_pipeline(send_email=False)
+                st.session_state.pipeline_result = _pr5
+            except Exception as _e5:
+                logging.warning(f"미리보기용 파이프라인 자동 실행 실패: {_e5}")
+
+        if _pr5 is None:
+            st.info("데이터 수집 중 오류가 발생했습니다. 상단 '수동 수집' 버튼을 클릭해 주세요.")
         else:
             _cmt5  = st.session_state.comment_text or _pr5.comment
             _c5, _p5 = _report_date_labels(_pr5.ran_at, st.session_state.graph_data or [])
@@ -825,7 +795,7 @@ with tab4:
                                    current_date=_pr5.ran_at[:10])
 
             with st.expander("📋 HTML 보고서 미리보기 (이메일 발송 내용)", expanded=True):
-                st.components.v1.html(_html5, height=900, scrolling=True)
+                st.components.v1.html(_html5, height=950, scrolling=True)
 
         # 검수 상태 배지
         if _rev5_status == "pending":
