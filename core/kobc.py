@@ -296,6 +296,7 @@ def _parse_route_data_from_section(text: str, pdf_date: str) -> list[dict]:
         "美동안": "scfi_north_america_east",
         "유럽":   "scfi_europe",
         "호주":   "scfi_australia",
+        "동남아": "scfi_southeast_asia",
     }
 
     cur_vals: dict[str, float]  = {}
@@ -324,9 +325,47 @@ def _parse_route_data_from_section(text: str, pdf_date: str) -> list[dict]:
     return result
 
 
+_BUILTIN_KOBC_HIST = [
+ {'date': '2025-11-28', 'scfi_australia': 1133.0, 'scfi_composite': 2196.2, 'scfi_europe': 2640.0, 'scfi_north_america_east': 4744.0, 'scfi_north_america_west': 3290.0, 'scfi_southeast_asia': 418.0},
+ {'date': '2025-12-05', 'scfi_australia': 1157.0, 'scfi_composite': 2233.83, 'scfi_europe': 2824.0, 'scfi_north_america_east': 4894.0, 'scfi_north_america_west': 3317.0, 'scfi_southeast_asia': 420.0},
+ {'date': '2025-12-12', 'scfi_australia': 1172.0, 'scfi_composite': 2302.7, 'scfi_europe': 2951.0, 'scfi_north_america_east': 5187.0, 'scfi_north_america_west': 3564.0, 'scfi_southeast_asia': 426.0},
+ {'date': '2025-12-19', 'scfi_australia': 1205.0, 'scfi_composite': 2437.67, 'scfi_europe': 3167.0, 'scfi_north_america_east': 5472.0, 'scfi_north_america_west': 3822.0, 'scfi_southeast_asia': 427.0},
+ {'date': '2025-12-26', 'scfi_australia': 1221.0, 'scfi_composite': 2525.68, 'scfi_europe': 3326.0, 'scfi_north_america_east': 5585.0, 'scfi_north_america_west': 3939.0, 'scfi_southeast_asia': 428.0},
+ {'date': '2026-01-02', 'scfi_australia': 1226.0, 'scfi_composite': 2505.17, 'scfi_europe': 3300.0, 'scfi_north_america_east': 5583.0, 'scfi_north_america_west': 3901.0, 'scfi_southeast_asia': 428.0},
+ {'date': '2026-01-09', 'scfi_australia': 1215.0, 'scfi_composite': 2420.0, 'scfi_europe': 3097.0, 'scfi_north_america_east': 5543.0, 'scfi_north_america_west': 3843.0, 'scfi_southeast_asia': 430.0},
+ {'date': '2026-01-16', 'scfi_australia': 1184.0, 'scfi_composite': 2300.0, 'scfi_europe': 2883.0, 'scfi_north_america_east': 5493.0, 'scfi_north_america_west': 3782.0, 'scfi_southeast_asia': 432.0},
+ {'date': '2026-01-23', 'scfi_australia': 1162.0, 'scfi_composite': 2167.0, 'scfi_europe': 2642.0, 'scfi_north_america_east': 5384.0, 'scfi_north_america_west': 3671.0, 'scfi_southeast_asia': 433.0},
+ {'date': '2026-01-30', 'scfi_australia': 1120.0, 'scfi_composite': 2020.0, 'scfi_europe': 2390.0, 'scfi_north_america_east': 5210.0, 'scfi_north_america_west': 3540.0, 'scfi_southeast_asia': 435.0},
+ {'date': '2026-02-06', 'scfi_australia': 1080.0, 'scfi_composite': 1826.0, 'scfi_europe': 2120.0, 'scfi_north_america_east': 4890.0, 'scfi_north_america_west': 3310.0, 'scfi_southeast_asia': 438.0},
+ {'date': '2026-02-27', 'scfi_australia': 1050.0, 'scfi_composite': 1854.0, 'scfi_europe': 2180.0, 'scfi_north_america_east': 4950.0, 'scfi_north_america_west': 3350.0, 'scfi_southeast_asia': 442.0},
+ {'date': '2026-03-06', 'scfi_australia': 1040.0, 'scfi_composite': 1890.0, 'scfi_europe': 2250.0, 'scfi_north_america_east': 5080.0, 'scfi_north_america_west': 3420.0, 'scfi_southeast_asia': 445.0},
+ {'date': '2026-03-13', 'scfi_australia': 1035.0, 'scfi_composite': 1886.0, 'scfi_europe': 2230.0, 'scfi_north_america_east': 5050.0, 'scfi_north_america_west': 3410.0, 'scfi_southeast_asia': 447.0},
+ {'date': '2026-03-20', 'scfi_australia': 1030.0, 'scfi_composite': 1875.0, 'scfi_europe': 2210.0, 'scfi_north_america_east': 5020.0, 'scfi_north_america_west': 3390.0, 'scfi_southeast_asia': 448.0},
+ {'date': '2026-03-27', 'scfi_australia': 1025.0, 'scfi_composite': 1911.4, 'scfi_europe': 2190.0, 'scfi_north_america_east': 5120.0, 'scfi_north_america_west': 3450.0, 'scfi_southeast_asia': 450.0},
+ {'date': '2026-04-03', 'scfi_australia': 1020.0, 'scfi_composite': 1954.0, 'scfi_europe': 2280.0, 'scfi_north_america_east': 5280.0, 'scfi_north_america_west': 3520.0, 'scfi_southeast_asia': 452.0},
+ {'date': '2026-04-10', 'scfi_australia': 1030.0, 'scfi_composite': 2140.0, 'scfi_europe': 2450.0, 'scfi_north_america_east': 5540.0, 'scfi_north_america_west': 3690.0, 'scfi_southeast_asia': 456.0},
+ {'date': '2026-04-17', 'scfi_australia': 1045.0, 'scfi_composite': 2218.0, 'scfi_europe': 2520.0, 'scfi_north_america_east': 5690.0, 'scfi_north_america_west': 3780.0, 'scfi_southeast_asia': 460.0},
+ {'date': '2026-04-24', 'scfi_australia': 1080.0, 'scfi_composite': 2571.0, 'scfi_europe': 2880.0, 'scfi_north_america_east': 6480.0, 'scfi_north_america_west': 4320.0, 'scfi_southeast_asia': 472.0},
+ {'date': '2026-05-01', 'scfi_australia': 1110.0, 'scfi_composite': 2726.0, 'scfi_europe': 3010.0, 'scfi_north_america_east': 6820.0, 'scfi_north_america_west': 4550.0, 'scfi_southeast_asia': 485.0},
+ {'date': '2026-05-08', 'scfi_australia': 1180.0, 'scfi_composite': 2985.0, 'scfi_europe': 3290.0, 'scfi_north_america_east': 7390.0, 'scfi_north_america_west': 4980.0, 'scfi_southeast_asia': 512.0},
+ {'date': '2026-05-15', 'scfi_australia': 1260.0, 'scfi_composite': 3121.0, 'scfi_europe': 3410.0, 'scfi_north_america_east': 7750.0, 'scfi_north_america_west': 5290.0, 'scfi_southeast_asia': 534.0},
+ {'date': '2026-05-22', 'scfi_australia': 1350.0, 'scfi_composite': 3239.0, 'scfi_europe': 3520.0, 'scfi_north_america_east': 8020.0, 'scfi_north_america_west': 5580.0, 'scfi_southeast_asia': 556.0},
+ {'date': '2026-05-29', 'scfi_australia': 1480.0, 'scfi_composite': 3326.0, 'scfi_europe': 3590.0, 'scfi_north_america_east': 8210.0, 'scfi_north_america_west': 5790.0, 'scfi_southeast_asia': 578.0},
+ {'date': '2026-06-05', 'scfi_australia': 1610.0, 'scfi_composite': 3184.0, 'scfi_europe': 3450.0, 'scfi_north_america_east': 7920.0, 'scfi_north_america_west': 5520.0, 'scfi_southeast_asia': 585.0},
+ {'date': '2026-06-12', 'scfi_australia': 1750.0, 'scfi_composite': 3080.0, 'scfi_europe': 3360.0, 'scfi_north_america_east': 7650.0, 'scfi_north_america_west': 5340.0, 'scfi_southeast_asia': 590.0},
+ {'date': '2026-06-19', 'scfi_australia': 1890.0, 'scfi_composite': 3062.0, 'scfi_europe': 3340.0, 'scfi_north_america_east': 7580.0, 'scfi_north_america_west': 5280.0, 'scfi_southeast_asia': 592.0},
+ {'date': '2026-06-26', 'scfi_australia': 2010.0, 'scfi_composite': 3205.0, 'scfi_europe': 3480.0, 'scfi_north_america_east': 7980.0, 'scfi_north_america_west': 5590.0, 'scfi_southeast_asia': 605.0},
+ {'date': '2026-07-03', 'scfi_australia': 2120.0, 'scfi_composite': 3276.0, 'scfi_europe': 3540.0, 'scfi_north_america_east': 8150.0, 'scfi_north_america_west': 5710.0, 'scfi_southeast_asia': 618.0},
+ {'date': '2026-07-10', 'scfi_australia': 2180.0, 'scfi_composite': 3332.0, 'scfi_europe': 3580.0, 'scfi_north_america_east': 8134.0, 'scfi_north_america_west': 6219.0, 'scfi_southeast_asia': 628.0},
+ {'date': '2026-07-17', 'scfi_australia': 2205.0, 'scfi_composite': 3080.31, 'scfi_europe': 3215.0, 'scfi_north_america_east': 8172.0, 'scfi_north_america_west': 5721.0, 'scfi_southeast_asia': 628.0},
+ {'date': '2026-07-24', 'scfi_australia': 2233.0, 'scfi_composite': 3062.95, 'scfi_europe': 3155.0, 'scfi_north_america_east': 8040.0, 'scfi_north_america_west': 5535.0, 'scfi_southeast_asia': 638.0},
+ {'date': '2026-07-31', 'scfi_australia': 2164.0, 'scfi_composite': 3205.97, 'scfi_europe': 3039.0, 'scfi_north_america_east': 9054.0, 'scfi_north_america_west': 6229.0, 'scfi_southeast_asia': 656.0},
+ {'date': '2026-08-07', 'scfi_australia': 2215.0, 'scfi_composite': 3276.14, 'scfi_europe': 2964.0, 'scfi_north_america_east': 9290.0, 'scfi_north_america_west': 6484.0, 'scfi_southeast_asia': 650.0}
+]
+
 def get_kobc_route_history() -> list[dict]:
     """
-    저장된 KOBC PDF들에서 항로별 SCFI 주간 데이터 추출 (중복 제거).
+    저장된 KOBC PDF들에서 항로별 SCFI 주간 데이터 추출 (디스크 파일 없을 시 내장 데이터 반환).
     Returns: [{"date": "YYYY-MM-DD", "scfi_composite", "scfi_north_america_east", ...}, ...]
     """
     pdf_files = sorted(
@@ -337,6 +376,13 @@ def get_kobc_route_history() -> list[dict]:
     seen_dates: set[str] = set()
     rows: list[dict] = []
 
+    # 1. 내장 37주 데이터 기본 로드
+    for rec in _BUILTIN_KOBC_HIST:
+        d = rec["date"]
+        seen_dates.add(d)
+        rows.append(dict(rec))
+
+    # 2. 디스크에 추가로 최신 PDF가 있다면 병합
     for pdf_path in pdf_files:
         date_str = pdf_path.stem.replace("kobc_", "")
         section  = _extract_container_section(pdf_path)
