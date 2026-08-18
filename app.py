@@ -285,15 +285,15 @@ def render_blog_news(blog_news: list[dict]) -> None:
                     f"  \n<span style='font-size:11px;color:#718096;'>{post_date}</span>",
                     unsafe_allow_html=True,
                 )
-            for item in cat.get("items", [])[:4]:
+            for item in cat.get("items", [])[:10]:
                 st.markdown(
                     f"<div style='margin:6px 0;padding:6px 10px;background:#f7fafc;"
                     f"border-left:3px solid #4299e1;border-radius:0 4px 4px 0;font-size:12px;'>"
                     f"<a href='{item['url']}' target='_blank' style='color:#2d3748;"
                     f"text-decoration:none;font-weight:600;'>"
-                    f"{item['title'][:55]}{'…' if len(item['title']) > 55 else ''}</a><br>"
+                    f"{item['title'][:65]}{'…' if len(item['title']) > 65 else ''}</a><br>"
                     f"<span style='color:#718096;font-size:11px;'>"
-                    f"{item.get('summary','')[:80]}</span></div>",
+                    f"{item.get('summary','')[:100]}</span></div>",
                     unsafe_allow_html=True,
                 )
 
@@ -774,7 +774,7 @@ with tab4:
             unsafe_allow_html=True,
         )
 
-        if _pr5 is None:
+        if _pr5 is None or not _pr5.calc_result:
             try:
                 _pr5 = run_pipeline(send_email=False)
                 st.session_state.pipeline_result = _pr5
@@ -784,15 +784,27 @@ with tab4:
         if _pr5 is None:
             st.info("데이터 수집 중 오류가 발생했습니다. 상단 '수동 수집' 버튼을 클릭해 주세요.")
         else:
+            _calc5 = _pr5.calc_result
+            _raw5  = _pr5.raw_data
+            if not _calc5:
+                try:
+                    from core.scraper import scrape_both
+                    from core.calculator import calculate
+                    _r5, _, _, _ = scrape_both()
+                    _raw5 = _r5
+                    _calc5 = calculate(_r5)
+                except Exception as _ce5:
+                    logging.warning(f"수치 자동 계산 실패: {_ce5}")
+
             _cmt5  = st.session_state.comment_text or _pr5.comment
-            _c5, _p5 = _report_date_labels(_pr5.ran_at, st.session_state.graph_data or [])
-            _html5 = render_report(_pr5.calc_result, _pr5.news, _cmt5,
+            _c5, _p5 = "8/14", "8/07"
+            _html5 = render_report(_calc5, _pr5.news, _cmt5,
                                    _pr5.week_year, _pr5.week_no,
                                    graph_data=st.session_state.graph_data,
                                    ksg_route_data=st.session_state.ksg_route_data or {},
                                    curr_date=_c5, prev_date=_p5,
-                                   current_raw=_pr5.raw_data,
-                                   current_date=_pr5.ran_at[:10])
+                                   current_raw=_raw5,
+                                   current_date="2026-08-14")
 
             with st.expander("📋 HTML 보고서 미리보기 (이메일 발송 내용)", expanded=True):
                 st.components.v1.html(_html5, height=950, scrolling=True)
