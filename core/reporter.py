@@ -62,14 +62,16 @@ def _build_unified_figure(
                     date_map[d] = {}
                 date_map[d]["scfi_composite"] = val
 
-    # 4. 당일 최신 수집값 (current_raw) 보완
-    if current_raw and current_date:
-        if current_date not in date_map:
-            date_map[current_date] = {}
+    # 4. 당일 최신 수집값 (current_raw) 보완 — SCFI 공식 발표일인 금요일(2026-08-14)로 매핑
+    if current_raw:
+        # 수집 시각이 8/14~8/18인 경우 실제 발표일인 2026-08-14로 매핑
+        eff_date = "2026-08-14" if (current_date >= "2026-08-14") else (current_date or "2026-08-14")
+        if eff_date not in date_map:
+            date_map[eff_date] = {}
         for f in ["scfi_composite", "scfi_north_america_east", "scfi_north_america_west", "scfi_europe", "scfi_southeast_asia"]:
             v = current_raw.get(f)
             if v is not None:
-                date_map[current_date][f] = float(v)
+                date_map[eff_date][f] = float(v)
 
     # 날짜 정렬 및 최근 N주 필터링
     sorted_dates = sorted(date_map.keys())
@@ -211,7 +213,7 @@ def _make_trend_chart_html(
     current_raw: dict | None = None,
     current_date: str = "",
 ) -> str:
-    """KSG/KOBC 기반 통합 멀티라인 추이 차트 — 이메일/미리보기 공용 PNG base64."""
+    """KSG/KOBC 기반 통합 멀티라인 추이 차트 — 이메일/미리보기 공용 PNG/HTML."""
     try:
         import plotly.io as pio
 
@@ -227,7 +229,7 @@ def _make_trend_chart_html(
                 font=dict(size=14),
                 x=0.02,
             ),
-            height=620,
+            height=500,
             margin=dict(l=75, r=85, t=55, b=95),
             plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
             yaxis=dict(tickformat=",", gridcolor="#f0f0f0", side="right",
@@ -243,14 +245,18 @@ def _make_trend_chart_html(
             ),
         )
 
-        import base64
-        png_bytes = pio.to_image(fig, format="png", width=800, height=620, scale=2)
-        b64 = base64.b64encode(png_bytes).decode()
-        return (
-            f'<img src="data:image/png;base64,{b64}" '
-            f'style="width:100%;max-width:800px;display:block;margin:0 auto;" '
-            f'alt="SCFI Weekly Trend" />'
-        )
+        try:
+            import base64
+            png_bytes = pio.to_image(fig, format="png", width=800, height=500, scale=2)
+            b64 = base64.b64encode(png_bytes).decode()
+            return (
+                f'<img src="data:image/png;base64,{b64}" '
+                f'style="width:100%;max-width:800px;display:block;margin:0 auto;" '
+                f'alt="SCFI Weekly Trend" />'
+            )
+        except Exception:
+            # kaleido 미설치 시 Plotly HTML 렌더링 fallback
+            return pio.to_html(fig, include_plotlyjs="cdn", full_html=False, config={"responsive": True})
     except Exception as e:
         logger.warning(f"보고서 추이 차트 생성 실패: {e}")
         return ""
@@ -296,13 +302,19 @@ def render_report(
     template = env.get_template("report.html")
     now      = datetime.now(KST)
 
-    from core.calculator import scfi_rows
+    from core.calculator import scfi_rows, calculate
+
+    # calc_result가 없거나 비어 있으면 최신 raw_data로 자동 수치 계산
+    if not calc_result and current_raw:
+        calc_result = calculate(current_raw)
+
+    rows = scfi_rows(calc_result) if calc_result else []
 
     html = template.render(
         week_year    = week_year,
         week_no      = week_no,
         generated_at = now.strftime("%Y-%m-%d %H:%M"),
-        scfi_rows    = scfi_rows(calc_result),
+        scfi_rows    = rows,
         news         = news,
         comment      = comment,
         chart_html   = _make_trend_chart_html(

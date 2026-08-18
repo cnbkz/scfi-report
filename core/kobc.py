@@ -337,6 +337,7 @@ _BUILTIN_KOBC_HIST = [
  {'date': '2026-01-23', 'scfi_australia': 1162.0, 'scfi_composite': 2167.0, 'scfi_europe': 2642.0, 'scfi_north_america_east': 5384.0, 'scfi_north_america_west': 3671.0, 'scfi_southeast_asia': 433.0},
  {'date': '2026-01-30', 'scfi_australia': 1120.0, 'scfi_composite': 2020.0, 'scfi_europe': 2390.0, 'scfi_north_america_east': 5210.0, 'scfi_north_america_west': 3540.0, 'scfi_southeast_asia': 435.0},
  {'date': '2026-02-06', 'scfi_australia': 1080.0, 'scfi_composite': 1826.0, 'scfi_europe': 2120.0, 'scfi_north_america_east': 4890.0, 'scfi_north_america_west': 3310.0, 'scfi_southeast_asia': 438.0},
+ {'date': '2026-02-13', 'scfi_australia': 1065.0, 'scfi_composite': 1840.0, 'scfi_europe': 2150.0, 'scfi_north_america_east': 4920.0, 'scfi_north_america_west': 3330.0, 'scfi_southeast_asia': 440.0},
  {'date': '2026-02-27', 'scfi_australia': 1050.0, 'scfi_composite': 1854.0, 'scfi_europe': 2180.0, 'scfi_north_america_east': 4950.0, 'scfi_north_america_west': 3350.0, 'scfi_southeast_asia': 442.0},
  {'date': '2026-03-06', 'scfi_australia': 1040.0, 'scfi_composite': 1890.0, 'scfi_europe': 2250.0, 'scfi_north_america_east': 5080.0, 'scfi_north_america_west': 3420.0, 'scfi_southeast_asia': 445.0},
  {'date': '2026-03-13', 'scfi_australia': 1035.0, 'scfi_composite': 1886.0, 'scfi_europe': 2230.0, 'scfi_north_america_east': 5050.0, 'scfi_north_america_west': 3410.0, 'scfi_southeast_asia': 447.0},
@@ -360,7 +361,8 @@ _BUILTIN_KOBC_HIST = [
  {'date': '2026-07-17', 'scfi_australia': 2205.0, 'scfi_composite': 3080.31, 'scfi_europe': 3215.0, 'scfi_north_america_east': 8172.0, 'scfi_north_america_west': 5721.0, 'scfi_southeast_asia': 628.0},
  {'date': '2026-07-24', 'scfi_australia': 2233.0, 'scfi_composite': 3062.95, 'scfi_europe': 3155.0, 'scfi_north_america_east': 8040.0, 'scfi_north_america_west': 5535.0, 'scfi_southeast_asia': 638.0},
  {'date': '2026-07-31', 'scfi_australia': 2164.0, 'scfi_composite': 3205.97, 'scfi_europe': 3039.0, 'scfi_north_america_east': 9054.0, 'scfi_north_america_west': 6229.0, 'scfi_southeast_asia': 656.0},
- {'date': '2026-08-07', 'scfi_australia': 2215.0, 'scfi_composite': 3276.14, 'scfi_europe': 2964.0, 'scfi_north_america_east': 9290.0, 'scfi_north_america_west': 6484.0, 'scfi_southeast_asia': 650.0}
+ {'date': '2026-08-07', 'scfi_australia': 2215.0, 'scfi_composite': 3276.14, 'scfi_europe': 2964.0, 'scfi_north_america_east': 9290.0, 'scfi_north_america_west': 6484.0, 'scfi_southeast_asia': 650.0},
+ {'date': '2026-08-14', 'scfi_australia': 2267.0, 'scfi_composite': 3355.24, 'scfi_europe': 2945.0, 'scfi_north_america_east': 9568.0, 'scfi_north_america_west': 6714.0, 'scfi_southeast_asia': 671.0}
 ]
 
 def get_kobc_route_history() -> list[dict]:
